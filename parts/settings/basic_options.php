@@ -1,6 +1,6 @@
 <?php 
 /*
- Title: LinkedIn API Keys
+ Title: LinkedIn Login Options
  Setting: pkli_basic_options
  Tab Order: 10
  */
@@ -31,7 +31,7 @@ piklist('field', array(
 piklist('field', array(
   'type' => 'text'
   ,'field' => 'li_redirect_url'
-  ,'label' => __('Redirect URL','linkedin-login')
+  ,'label' => __('Login Redirect URL','linkedin-login')
   ,'description' => __('The absolute URL to redirect users to after login. If left blank or points to external host, will redirect to the dashboard page.','linkedin-login')
   ,'help' => __('Write the full URL to redirect to after login, e.g. http://example.com/redirect/','linkedin-login'),
   'value' => __('','linkedin-login')
@@ -52,6 +52,18 @@ piklist('field', array(
   )
  ));
 
+piklist('field', array(
+  'type' => 'text'
+  ,'field' => 'li_cancel_redirect_url'
+  ,'label' => __('Cancel Redirect URL','linkedin-login')
+  ,'description' => __('Users are redirected to this URL when they click Cancel on the LinkedIn Authentication page. This is useful if you want to show them a different option if for some reason they do not want to login with their LinkedIn account. If left blank or points to external host, will redirect back to default WordPress login page.','linkedin-login')
+  ,'help' => __('Write the full URL to redirect to after cancellation, e.g. http://example.com/signup-thank-you/','linkedin-login'),
+  'value' => __('','linkedin-login')
+  ,'attributes' => array(
+  'class' => 'text'
+  )
+ ));
+
   piklist('field', array(
     'type' => 'select'
     ,'field' => 'li_auto_profile_update'
@@ -66,3 +78,35 @@ piklist('field', array(
       ,'no' => 'No'
     )
   ));
+  
+    piklist('field', array(
+    'type' => 'select'
+    ,'field' => 'li_override_profile_photo'
+    ,'label' => 'Override the user\'s profile picture?'
+    ,'description' => 'When enabled, this option fetches the user\'s profile picture from LinkedIn and overrides the default gravatar.com user profile picture used by WordPress. If the plugin is setup to retrive new profile data on every login, the profile picture will be retrieved as well.'
+    ,'attributes' => array(
+      'class' => 'text'
+    )
+    ,'choices' => array(
+	'no' => 'No',
+	'yes' => 'Yes'
+    )
+  ));
+    
+piklist('field', array(
+  'type' => 'textarea'
+  ,'field' => 'li_logged_in_message'
+  ,'label' => __('Logged In Message','linkedin-login')
+  ,'description' => __('Enter a message you would like to show for logged in users in place of the login button. If left blank, the button is hidden and no message is shown.','linkedin-login')
+  ,'help' => __('Write a meaningful message for logged in users. Basic HTML tags are allowed: br, strong, em...','linkedin-login'),
+  'value' => __('','linkedin-login')
+  ,'attributes' => array(
+    'class' => 'large-text',
+    'rows' => 5
+  ),
+'sanitize' => array(
+      array(
+        'type' => 'wp_kses_post'
+      )
+    )
+ ));    

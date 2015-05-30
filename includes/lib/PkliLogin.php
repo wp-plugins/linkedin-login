@@ -22,9 +22,6 @@ Class PkliLogin {
     const _TOKEN_URL = 'https://www.linkedin.com/uas/oauth2/accessToken';
     const _BASE_URL = 'https://api.linkedin.com/v1';
     
-    // The URI to redirect to after OAuth success
-    public $redirect_uri;
-    
     // LinkedIn Application Key
     public $li_api_key;
     
@@ -39,11 +36,17 @@ Class PkliLogin {
     
     // Stores the user redirect after login
     public $user_redirect = false;
+    
+    // Stores our WordPress session object
+    public $wp_session;
+    
+    // Stores our LinkedIn options 
+    public $li_options;
 
     public function __construct() {
-
-        // Setup redirect uri 
-        $this->redirect_uri = wp_login_url() . '?action=pkli_login';
+	
+	// Initialize our WP session
+	$this->wp_session = WP_Session::get_instance();		
 
         // This action displays the LinkedIn Login button on the default WordPress Login Page
         add_action('login_form', array($this, 'display_login_button'));
@@ -56,6 +59,9 @@ Class PkliLogin {
         $this->li_api_key = $li_keys['li_api_key'];
         $this->li_secret_key = $li_keys['li_secret_key'];
         
+	// Get plugin options
+	$this->li_options = get_option('pkli_basic_options');
+	
         // Require OAuth2 client to process authentications
         require_once(PKLI_PATH . '/includes/lib/Pkli_OAuth2Client.php');
 
@@ -63,7 +69,7 @@ Class PkliLogin {
         $this->oauth = new Pkli_OAuth2Client($this->li_api_key, $this->li_secret_key);
         
         // Set Oauth URLs
-        $this->oauth->redirect_uri = $this->redirect_uri;
+        $this->oauth->redirect_uri = wp_login_url() . '?action=pkli_login';
         $this->oauth->authorize_url = self::_AUTHORIZE_URL;
         $this->oauth->token_url = self::_TOKEN_URL;
 	$this->oauth->api_base_url = self::_BASE_URL;
@@ -73,7 +79,8 @@ Class PkliLogin {
 	    $this->oauth->access_token = get_user_meta(get_current_user_id(), 'pkli_access_token', true);
 	}
         // Add shortcode for getting LinkedIn Login URL
-        add_shortcode( 'wpli_login_link', array($this, 'get_login_link') );        
+        add_shortcode( 'wpli_login_link', array($this, 'get_login_link') );   
+
 
     }
 
@@ -83,16 +90,20 @@ Class PkliLogin {
         $state = wp_generate_password(12, false);
         $authorize_url = $this->oauth->authorizeUrl(array('scope' => 'r_basicprofile r_emailaddress',
             'state' => $state));
-
+	
         // Store state in database in temporarily till checked back
-        $_SESSION['li_api_state'][$state] = $redirect;
+        $this->wp_session['li_api_state'] = $state;
+	
+	// Store redirect URL in session
+	$this->wp_session['li_api_redirect'] = $redirect;
 
         return $authorize_url;
     }
 
-    // Returns the code for the login button
+    // This function displays the login button on the default WP login page
     public function display_login_button() {
-
+	
+	// User is not logged in, display login button
         echo "<p><a rel='nofollow' href='" . $this->get_auth_url() . "'>
                                             <img alt='LinkedIn' src='" . plugins_url() . "/linkedin-login/includes/assets/img/linkedin-button.png' />
         </a></p>";
@@ -107,9 +118,27 @@ Class PkliLogin {
 	}
 	
 	// If this is a user sign-in request, but the user denied granting access, redirect to login URL
+	if (isset($_REQUEST['error']) && $_REQUEST['error'] == 'access_denied') {
+	    
+	    // Get our cancel redirect URL
+	    $cancel_redirect_url = $this->li_options['li_cancel_redirect_url'];
+
+	    // Redirect to login URL if left blank
+	    if(empty($cancel_redirect_url)){
+		wp_redirect(wp_login_url());
+	    }
+	    
+	    // Redirect to our given URL
+	    wp_safe_redirect($cancel_redirect_url);
+        }
+	
+	// Another error occurred, create an error log entry
 	if (isset($_REQUEST['error'])) {
-	    wp_redirect(wp_login_url());
-        }	          	
+	    $error = $_REQUEST['error'];
+	    $error_description = $_REQUEST['error_description'];
+	    error_log("WP_LinkedIn Login Error\nError: $error\nDescription: $error_description");
+	}
+	
 
 	// Get profile XML response
 	$xml = $this->get_linkedin_profile();
@@ -157,7 +186,7 @@ Class PkliLogin {
 
 	// Get first name, last name and email address, and load 
 	// response into XML object
-	$xml = simplexml_load_string($this->oauth->get('https://api.linkedin.com/v1/people/~:(id,first-name,last-name,email-address,summary,site-standard-profile-request)'));  
+	$xml = simplexml_load_string($this->oauth->get('https://api.linkedin.com/v1/people/~:(id,first-name,last-name,email-address,summary,site-standard-profile-request,picture-url)'));  
 	
 	return $xml;
     }
@@ -176,9 +205,8 @@ Class PkliLogin {
 	    return false;
 	}
 	
-	// If state is not set, there might be a request forgery
-	// TODO: Check if the state received is the same we sent for further security
-	if ( ! isset($_SESSION['li_api_state'][$_REQUEST['state']] )) {
+	// If state is not set, or it is different than what we expect there might be a request forgery
+	if ( ! isset($this->wp_session['li_api_state'] ) || $_REQUEST['state'] != $this->wp_session['li_api_state']) {
 	    return false;
 	}
 
@@ -196,14 +224,14 @@ Class PkliLogin {
 	// Logout any logged in user before we start to avoid any issues arising
 	wp_logout();	
 	
+	// Set default redirect URL to the URL provided by shortcode and stored in session
+	$this->user_redirect = $this->wp_session['li_api_redirect'];
+	
 	// Get the user's email address
 	$email = (string) $xml->{'email-address'};
 
 	// Get the user's application-specific LinkedIn ID
 	$linkedin_id = (string) $xml->{'id'};	
-	
-	// Get plugin option
-	$li_options = get_option('pkli_basic_options');
 	
 	// See if a user with the above LinkedIn ID exists in our database
 	$user_by_id = get_users(array('meta_key' => 'pkli_linkedin_id',
@@ -214,11 +242,16 @@ Class PkliLogin {
 
 	    $user_id = $user_by_id[0]->ID;
 
-	    // User signs up with his LinkedIn ID for the first time, redirect him to reg URL
-	    $this->user_redirect = $li_options['li_redirect_url'];
+	    // No custom redirect URL has been specified
+	    if($this->wp_session['li_api_redirect'] === false) {
+		
+		// User already exists in our database, redirect him to Login Redirect URL
+		$this->user_redirect = $this->li_options['li_redirect_url'];		
+		
+	    }	    
 	    
 	    // Update the user's data upon login if the option is enabled
-	    if($li_options['li_auto_profile_update'] == 'yes'){
+	    if($this->li_options['li_auto_profile_update'] == 'yes'){
 		$this->update_user_data($xml, $user_id);
 	    }
 	    
@@ -232,11 +265,15 @@ Class PkliLogin {
 	    // Get the user ID by email
 	    $user = get_user_by('email',$email);
 
-	    // User signs up with his LinkedIn ID for the first time, redirect him to reg URL
-	    $this->user_redirect = $li_options['li_registration_redirect_url'];
+	    // No custom redirect URL has been specified
+	    if($this->wp_session['li_api_redirect'] === false) {
+		
+		// User signs up with his LinkedIn ID for the first time, redirect him to reg URL
+		$this->user_redirect = $this->li_options['li_registration_redirect_url'];
 	    
+	    }
 	    // Update the user's data upon login if the option is enabled
-	    if($li_options['li_auto_profile_update'] == 'yes'){
+	    if($this->li_options['li_auto_profile_update'] == 'yes'){
 		$this->update_user_data($xml, $user->ID);
 	    }	    
 	    // Return the user's ID
@@ -252,7 +289,7 @@ Class PkliLogin {
 	    $user_id = wp_create_user( $email, wp_generate_password(16), $email );
 
 	    // Set the user redirect URL
-	    $this->user_redirect = $li_options['li_registration_redirect_url'];
+	    $this->user_redirect = $this->li_options['li_registration_redirect_url'];
 
 	    // Update the user's data, since this is his first sign-in
 	    $this->update_user_data($xml, $user_id);
@@ -269,23 +306,29 @@ Class PkliLogin {
     // Used by shortcode in order to get the login link
     public function get_login_link($attributes = false){
         
-	    // extract data from array
-	    extract( shortcode_atts( array('text' => 'Login With LinkedIn', 'img' => PKLI_URL.'includes/assets/img/linkedin-button.png', 'redirect' => '' , 'class' => ''), $attributes ) );
-
-	    $auth_url = $this->get_auth_url($redirect);
-
-	    // User has specified an image
-	    if(isset($attributes['img']) ){
-		return "<a href='".$auth_url."' class='$class'><img src='".$img."' /></a>";
-	    }
+	// Display the logged in message if user is already logged in
+	if(is_user_logged_in()) {
 	    
-	    // User has specified text
-	    if(isset($attributes['text']) ){
-		return "<a href='".$auth_url."' class='$class'>".$text."</a>";
-	    }
-	    
-	    // Default fields
+	    return $this->li_options['li_logged_in_message'];
+
+	}
+	// extract data from array
+	extract( shortcode_atts( array('text' => 'Login With LinkedIn', 'img' => PKLI_URL.'includes/assets/img/linkedin-button.png', 'redirect' => false , 'class' => ''), $attributes ) );
+
+	$auth_url = $this->get_auth_url($redirect);
+
+	// User has specified an image
+	if(isset($attributes['img']) ){
 	    return "<a href='".$auth_url."' class='$class'><img src='".$img."' /></a>";
+	}
+
+	// User has specified text
+	if(isset($attributes['text']) ){
+	    return "<a href='".$auth_url."' class='$class'>".$text."</a>";
+	}
+
+	// Default fields
+	return "<a href='".$auth_url."' class='$class'><img src='".$img."' /></a>";
 	    
 	        
     }
@@ -297,6 +340,7 @@ Class PkliLogin {
 	$description = (string) $xml->{'summary'};
 	$linkedin_url = (string) $xml->{'site-standard-profile-request'}->url;
 	$linkedin_id = (string) $xml->{'id'};
+	$picture_url = (string) $xml->{'picture-url'};
 	
 	if(!$user_id){
 	    $user_id = get_current_user_id();
@@ -308,7 +352,7 @@ Class PkliLogin {
 	update_user_meta($user_id, 'pkli_linkedin_id', $linkedin_id);
 	
 	// Store all profile fields as metadata values
-	update_user_meta($user_id, 'pkli_linkedin_profile', array('first' => $first_name, 'last' => $last_name, 'description' => $description, 'linkedin_url' => $linkedin_url, 'linkedin_id' => $linkedin_id));
+	update_user_meta($user_id, 'pkli_linkedin_profile', array('first' => $first_name, 'last' => $last_name, 'description' => $description, 'linkedin_url' => $linkedin_url, 'linkedin_id' => $linkedin_id, 'profile_picture' => $picture_url));
 
 	return $result;
     }
