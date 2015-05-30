@@ -3,7 +3,7 @@
  * Plugin Name: WP LinkedIn Login
  * Plugin URI: http://thoughtengineer.com/wordpress-linkedin-login-plugin
  * Description: Enables login with LinkedIn functionality for your website
- * Version: 0.7.1
+ * Version: 0.8
  * Author: Samer Bechara
  * Author URI: http://thoughtengineer.com/
  * Text Domain: linkedin-login
@@ -38,8 +38,15 @@ define( 'PKLI_URL', plugin_dir_url(__FILE__));
 // Require PkliLogin class
 require_once (PKLI_PATH.'/includes/lib/PkliLogin.php');
 
-// Crete new PKLI object to register actions
+// Require WP_Session Class
+require_once (PKLI_PATH.'/includes/lib/wp-session-manager-1.2.0/wp-session-manager.php');
+
+// Require Pkli_Mods class
+require_once (PKLI_PATH.'/includes/lib/class-pkli-mods.php');
+
+// Crete new objects to register actions
 $linkedin = new PkliLogin();
+$linkedin_mods = new Pkli_Mods();
 
 // Initialize piklist framework
 add_action('init', 'pkli_init');
@@ -78,13 +85,6 @@ function pkli_init()
  
     return $pages;
   }
-
-    
-    // Register session for tracking oauth state code and redirect URL
-    function register_session(){
-    if( !session_id() )
-        session_start();
-    }
     
     
 /*
@@ -93,8 +93,6 @@ function pkli_init()
  function pkli_login_load_translation_files() {
   load_plugin_textdomain('linkedin-login', false, 'linkedin-login/languages');
  }    
-    
-add_action('init','register_session',1);
 
 //add action to load language files
  add_action('plugins_loaded', 'pkli_login_load_translation_files');
